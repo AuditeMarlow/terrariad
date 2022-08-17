@@ -1,0 +1,125 @@
+#!/bin/bash
+#
+# terrariad is a Terraria daemon script to help in basic administration in
+# running a Terraria dedicated server.
+
+TERRARIA_PATH="${TERRARIA_PATH:-${PWD}}"
+TERRARIA_SERVER="${TERRARIA_SERVER:-TerrariaServer.bin.x86_64}"
+TERRARIA_CONFIG="${TERRARIA_CONFIG:-config.txt}"
+#TERRARIA_CMD="mono --server --gc=sgen -O=all ${TERRARIA_SERVER} -config ${TERRARIA_CONFIG}"
+TERRARIA_CMD="${TERRARIA_CMD:-${TERRARIA_SERVER} -config ${TERRARIA_CONFIG}}"
+TERRARIA_LOG="${TERRARIA_LOG:-/tmp/terrariad.log}"
+TERRARIA_TMUX_SESSION="${TERRARIA_TMUX_SESSION:-terraria}"
+
+tmux_attach() {
+  if ! tmux_has_session; then
+    echo "Terraria tmux session is not running"
+    return
+  fi
+  tmux attach -t "${TERRARIA_TMUX_SESSION}"
+}
+
+tmux_has_session() {
+  tmux list-sessions 2>/dev/null | awk '{print $1}' | tr -d ':' | grep -q "${TERRARIA_TMUX_SESSION}"
+  return
+}
+
+tmux_create_session() {
+  echo "Creating new Terraria tmux session named \"${TERRARIA_TMUX_SESSION}\""
+  tmux new -d -s "${TERRARIA_TMUX_SESSION}"
+  return
+}
+
+tmux_cd_to_terraria_path() {
+  tmux send-keys -t "${TERRARIA_TMUX_SESSION}" "cd ${TERRARIA_PATH}" ENTER
+  return
+}
+
+tmux_kill_session() {
+  echo "Killing Terraria tmux session named \"${TERRARIA_TMUX_SESSION}\""
+  tmux kill-session -t "${TERRARIA_TMUX_SESSION}"
+  return
+}
+
+terraria_server_is_running() {
+  pgrep -f -a mono | grep -q "${TERRARIA_SERVER}"
+  return
+}
+
+terraria_start_server() {
+  echo "Starting Terraria server"
+  tmux send-keys -t "${TERRARIA_TMUX_SESSION}" "${TERRARIA_CMD}" ENTER
+  tmux pipe-pane -t "${TERRARIA_TMUX_SESSION}" -o "cat > ${TERRARIA_LOG}"
+  local started=no
+  local timeout=60  # in minutes
+  for _ in $(seq $((12*timeout))); do
+    sleep 5
+    local end
+    end="$(tail -n1 "${TERRARIA_LOG}" | col -b)"
+    if [[ "${end}" = *"Server started"* ]]; then
+      started=yes
+      break
+    fi
+  done
+  if [ "${started}" = "no" ]; then
+    echo "Starting Terraria server timed out"
+    return
+  fi
+  echo "Started Terraria server"
+}
+
+terraria_stop_server() {
+  echo "Gracefully stopping Terraria server"
+  tmux send-keys -t "${TERRARIA_TMUX_SESSION}" "exit" ENTER
+  local stopped=no
+  local timeout=5  # in minutes
+  for _ in $(seq $((12*timeout))); do
+    sleep 5
+    local end
+    end="$(tail -n1 "${TERRARIA_LOG}" | col -b)"
+    if [[ "${end}" = *"?2004h"* ]]; then
+      stopped=yes
+      break
+    fi
+  done
+  if [ "${stopped}" = "no" ]; then
+    echo "Could not gracefully stop Terraria server"
+    return
+  fi
+  echo "Gracefully stopped Terraria server"
+}
+
+start_server() {
+  if tmux_has_session; then
+    echo "Existing Terraria tmux session named \"${TERRARIA_TMUX_SESSION}\" found"
+    tmux_kill_session
+  fi
+  tmux_create_session
+  tmux_cd_to_terraria_path
+  if ! terraria_server_is_running; then
+    terraria_start_server
+  fi
+  return
+}
+
+stop_server() {
+  if ! tmux_has_session || ! terraria_server_is_running; then
+    echo "Terraria server is not running"
+    return
+  fi
+  terraria_stop_server
+  tmux_kill_session
+  return
+}
+
+case "$*" in
+  attach)
+    tmux_attach
+    ;;
+  start)
+    start_server
+    ;;
+  stop)
+    stop_server
+    ;;
+esac

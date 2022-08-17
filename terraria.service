@@ -1,0 +1,14 @@
+[Unit]
+Description=Terraria server
+After=network.target
+
+[Service]
+Type=forking
+User=user
+KillMode=none
+ExecStart=/usr/local/bin/terrariad start
+ExecStop=/usr/local/bin/terrariad stop
+TimeoutSec=3600
+
+[Install]
+WantedBy=multi-user.target
